@@ -4,12 +4,18 @@
   "bmv2_json": "build/main.json",
   "table_entries": [
     {
-      "table": "MyEgress.switch2_exact",
+      "table": "MyIngress.pause_exact",
       "default_action": true,
-      "action_name": "MyEgress.switch2_action",
+      "action_name": "MyIngress.set_pause_dest",
       "action_params": {
-        "swid": 1
+        "dstAddr": "10.0.1.1"
       }
+    },
+    {
+      "table": "MyEgress.switch_exact",
+      "default_action": true,
+      "action_name": "MyEgress.do_clone_e2e",
+      "action_params": { }
     },
     {
       "table": "MyIngress.ipv4_lpm",

@@ -2,8 +2,15 @@
 #include <core.p4>
 #include <v1model.p4>
 
+const bit<32> BMV2_V1MODEL_INSTANCE_TYPE_EGRESS_CLONE  = 2;
+const bit<32> BMV2_V1MODEL_INSTANCE_TYPE_RECIRC        = 4;
+
 const bit<16> TYPE_PAUSE = 0x1212; // defining another EtherType for our PAUSE frames (packets)
 const bit<16> TYPE_IPV4 = 0x800;
+
+#define IS_RECIRCULATED(std_meta) (std_meta.instance_type == BMV2_V1MODEL_INSTANCE_TYPE_RECIRC)
+#define IS_E2E_CLONE(std_meta) (std_meta.instance_type == BMV2_V1MODEL_INSTANCE_TYPE_EGRESS_CLONE)
+const bit<32> E2E_CLONE_SESSION_ID = 11;
 
 /*************************************************************************
 *********************** H E A D E R S  ***********************************
@@ -98,7 +105,20 @@ control MyIngress(inout headers hdr,
         hdr.ethernet.dstAddr = dstAddr;
         hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
     }
+
+    action set_pause_dest(ip4Addr_t dstAddr) {
+        hdr.ipv4.dstAddr = dstAddr;
+    }
     
+    table pause_exact {
+        actions = {
+            set_pause_dest;
+            drop;
+            NoAction;
+        }
+        default_action = drop();
+    }
+
     table ipv4_lpm {
         key = {
             hdr.ipv4.dstAddr: lpm;
@@ -113,6 +133,10 @@ control MyIngress(inout headers hdr,
     }
     
     apply {
+        if (IS_RECIRCULATED(standard_metadata)) {
+            pause_exact.apply();
+        } 
+        
         if (hdr.ipv4.isValid()) {
             ipv4_lpm.apply();
         }
@@ -127,23 +151,32 @@ control MyEgress(inout headers hdr,
                  inout metadata meta,
                  inout standard_metadata_t standard_metadata) {
     
-    action switch2_action(switchID_t swid) {
+    action ethertype_pause(switchID_t swid) {
         if (swid == 2) {
             hdr.ethernet.etherType = TYPE_PAUSE;
         }
     }
+
+    action do_clone_e2e() {
+        clone(CloneType.E2E, E2E_CLONE_SESSION_ID);
+    }
     
-    table switch2_exact {
+    table switch_exact {
         actions = {
-            switch2_action;
+            ethertype_pause;
+            do_clone_e2e;
             NoAction;
         }
         default_action = NoAction();
     }
 
-    apply { 
-        if (hdr.ipv4.isValid()) {
-            switch2_exact.apply();
+    apply {
+        if (IS_E2E_CLONE(standard_metadata)) {
+            // whatever you want to do special for egress-to-egress
+            // clone packets here.
+            recirculate(standard_metadata);
+        } else if (hdr.ipv4.isValid()) {
+            switch_exact.apply();
         }
     }
 }

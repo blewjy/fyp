@@ -43,9 +43,9 @@ def handle_pkt(pkt):
     global packets_sniffed
     packets_sniffed += 1
     print "sniffed a packet %d" % packets_sniffed
+    pkt.show2()
     if TCP in pkt and pkt[TCP].dport == 1234:
         print "got a packet"
-        pkt.show2()
     #    hexdump(pkt)
         sys.stdout.flush()
 
