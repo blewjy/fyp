@@ -5,11 +5,16 @@ import socket
 import random
 import struct
 
+from time import sleep
+
 from scapy.all import sendp, send, get_if_list, get_if_hwaddr
 from scapy.all import Packet, IPOption
 from scapy.all import Ether, IP, UDP, TCP
 from scapy.all import IntField, FieldListField, FieldLenField, ShortField, PacketListField
 from scapy.layers.inet import _IPOption_HDR
+
+packets_sent = 0
+
 
 def get_if():
     ifs=get_if_list()
@@ -49,8 +54,9 @@ def main():
     #   argv[1]: destination IP
     #   argv[2]: message string
     #   argv[3]: 1 for custom header, 0 for regular UDP
-    if len(sys.argv)<4:
-        print 'pass 3 arguments: <destination> "<message>" <custom or not>'
+    #   argv[4]: number of seconds to send packets at rate of 2 pkt/sec
+    if len(sys.argv)<5:
+        print 'pass 4 arguments: <destination> "<message>" <custom or not> <duration in s>'
         exit(1)
 
     addr = socket.gethostbyname(sys.argv[1])
@@ -70,7 +76,20 @@ def main():
         pkt = pkt / sys.argv[2]
         
     pkt.show2()
-    sendp(pkt, iface=iface, verbose=False)
+
+    try:
+      print
+      for i in range(int(sys.argv[4])):
+        sendp(pkt, iface=iface, verbose=False)
+        global packets_sent
+        packets_sent += 1  
+        sys.stdout.write("\rpackets sent: {0}".format(packets_sent))
+        sys.stdout.flush()
+        sleep(0.5)
+    except KeyboardInterrupt:
+        raise
+    finally:
+        print
 
 
 if __name__ == '__main__':

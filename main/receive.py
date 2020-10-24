@@ -14,6 +14,8 @@ TYPE_PAUSE = 0x1212
 bind_layers(Ether, IP, type=TYPE_PAUSE)
 
 packets_sniffed = 0
+regular_packets_received = 0
+custom_packets_received = 0
 
 def get_if():
     ifs=get_if_list()
@@ -46,23 +48,39 @@ class IPOption_SWTRACE(IPOption):
                                    SwitchTrace,
                                    count_from=lambda pkt:(pkt.count*1)) ]
 
-def handle_pkt(pkt):
+def handle_pkt(pkt, iface):
     global packets_sniffed
     packets_sniffed += 1
-    print "sniffed a packet %d" % packets_sniffed
-    if UDP in pkt and pkt[UDP].dport == 4321:
-        print "got a packet"
-        pkt.show2()
-        sys.stdout.flush()
+    if get_if_hwaddr(iface) == pkt[Ether].dst:
+        if UDP in pkt and pkt[UDP].dport == 4321:
+            global custom_packets_received
+            custom_packets_received += 1
+            max_qdepth = 0
+            for trace in pkt[IP].options[0].swtraces:
+                if trace.qdepth > max_qdepth:
+                    max_qdepth = trace.qdepth
+            # print max_qdepth
+        else:
+            global regular_packets_received
+            regular_packets_received += 1
+    
+    sys.stdout.write("custom packets: {0}\tiperf packets: {1}\r".format(custom_packets_received, regular_packets_received))
+    sys.stdout.flush()
+    # if UDP in pkt and pkt[UDP].dport == 4321:
+        # print "got a packet"
+        # pkt.show2()
+        # sys.stdout.flush()
 
 
 def main():
     ifaces = filter(lambda i: 'eth' in i, os.listdir('/sys/class/net/'))
     iface = ifaces[0]
     print "sniffing on %s" % iface
+    print "my interface mac addr: %s" % get_if_hwaddr(iface)
+    print
     sys.stdout.flush()
     sniff(iface = iface,
-          prn = lambda x: handle_pkt(x))
+          prn = lambda x: handle_pkt(x, iface))
 
 if __name__ == '__main__':
     main()

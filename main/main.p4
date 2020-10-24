@@ -13,9 +13,16 @@ Plan:
 - Now, we want to see what parameters for our iperf flow will there be substantial queue length increase. Then we see where it stabilizes.
 - At any of the switches, if it encounters that threshold, PAUSE frame will be sent backwards.
 - Each switch has a flag at each port to check if its paused. If it is, all "our" packets (with the custom headers) will be dropped. This simulates the "pause".
-- If the flow is paused, means that h2 will stop receiving "our" packets.
+- If the flow is paused, means that h2 will stop receiving "our" packets 
+  - a cool way to visualize this maybe with rate? like count how many packets per second the receiver is receiving.
+  - we can send maybe 10 packets per second
+  - receiver should receive about 10 packets per second if no interruption
+  - once paused, it should go down to 0 packets per second
+  - then back up to 10 packets per second when resume
 - Because we only have 2 switches, only s1 will receive the pause frame from s2, and only s1 will drop "our" packets.
 - Once the switch sees that the queue has cleared, and if the switch itself is not paused, then RESUME frame will be sent.
+  - gotta experiment what should be the definition of "queue has cleared"
+  - probably when our custom packet comes in and the switch sees like 5 consecutive packets with 0 deq_qdepth, then consider clear
 - Then the upstream switch will continue forwarding the packets.
 - And we should see "our" packets arriving at h2.
 
