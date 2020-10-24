@@ -13,6 +13,8 @@ from scapy.layers.inet import _IPOption_HDR
 TYPE_PAUSE = 0x1212
 bind_layers(Ether, IP, type=TYPE_PAUSE)
 
+packets_sniffed = 0
+
 def get_if():
     ifs=get_if_list()
     iface=None
@@ -38,6 +40,9 @@ class IPOption_MRI(IPOption):
                                    IntField("", 0),
                                    length_from=lambda pkt:pkt.count*4) ]
 def handle_pkt(pkt):
+    global packets_sniffed
+    packets_sniffed += 1
+    print "sniffed a packet %d" % packets_sniffed
     if TCP in pkt and pkt[TCP].dport == 1234:
         print "got a packet"
         pkt.show2()
