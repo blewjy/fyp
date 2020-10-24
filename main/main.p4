@@ -37,6 +37,10 @@ Plan:
 const bit<16> TYPE_PAUSE = 0x1212; // defining another EtherType for our PAUSE frames (packets)
 const bit<16> TYPE_IPV4 = 0x800;
 
+const bit<5>  IPV4_OPTION_SWTRACE = 31;
+
+#define MAX_HOPS 9
+
 /*************************************************************************
 *********************** H E A D E R S  ***********************************
 *************************************************************************/
@@ -45,6 +49,7 @@ typedef bit<9>  egressSpec_t;
 typedef bit<48> macAddr_t;
 typedef bit<32> ip4Addr_t;
 typedef bit<32> switchID_t;
+typedef bit<32> qdepth_t;
 
 header ethernet_t {
     macAddr_t dstAddr;
@@ -67,14 +72,44 @@ header ipv4_t {
     ip4Addr_t dstAddr;
 }
 
+header ipv4_option_t {
+    bit<1> copyFlag;
+    bit<2> optClass;
+    bit<5> option;
+    bit<8> optionLength;
+}
+
+header swtrace_count_t {
+    bit<16> count;
+}
+
+header swtrace_t {
+    switchID_t  swid;
+    qdepth_t    qdepth;
+}
+
+struct ingress_metadata_t {
+    bit<16>  count;
+}
+
+struct parser_metadata_t {
+    bit<16>  remaining;
+}
+
 struct metadata {
-    /* empty */
+    ingress_metadata_t ingress_metadata;
+    parser_metadata_t parser_metadata;
 }
 
 struct headers {
-    ethernet_t   ethernet;
-    ipv4_t       ipv4;
+    ethernet_t          ethernet;
+    ipv4_t              ipv4;
+    ipv4_option_t       ipv4_option;
+    swtrace_count_t     swtrace_count;
+    swtrace_t[MAX_HOPS] swtraces;
 }
+
+error { IPHeaderTooShort }
 
 /*************************************************************************
 *********************** P A R S E R  ***********************************
@@ -99,8 +134,39 @@ parser MyParser(packet_in packet,
 
     state parse_ipv4 {
         packet.extract(hdr.ipv4);
-        transition accept;
+        verify(hdr.ipv4.ihl >= 5, error.IPHeaderTooShort);
+        transition select(hdr.ipv4.ihl) {
+            5             : accept;
+            default       : parse_ipv4_option;
+        }    
     }
+
+    state parse_ipv4_option {
+        packet.extract(hdr.ipv4_option);
+        transition select(hdr.ipv4_option.option) {
+            IPV4_OPTION_SWTRACE: parse_swtrace_count;
+            default: accept;
+        }
+    }
+
+    state parse_swtrace_count {
+        packet.extract(hdr.swtrace_count);
+        meta.parser_metadata.remaining = hdr.swtrace_count.count;
+        transition select(meta.parser_metadata.remaining) {
+            0: accept;
+            default: parse_swtrace;
+        }
+    }
+
+    state parse_swtrace {
+        packet.extract(hdr.swtraces.next);
+        meta.parser_metadata.remaining = meta.parser_metadata.remaining  - 1;
+        transition select(meta.parser_metadata.remaining) {
+            0: accept;
+            default: parse_swtrace;
+        }
+    }   
+
 
 }
 
@@ -187,10 +253,35 @@ control MyEgress(inout headers hdr,
         default_action = drop();
     }
 
+    action add_swtrace(switchID_t swid) { 
+        hdr.swtrace_count.count = hdr.swtrace_count.count + 1;
+        hdr.swtraces.push_front(1);
+
+        hdr.swtraces[0].setValid();
+        hdr.swtraces[0].swid = swid;
+        hdr.swtraces[0].qdepth = (qdepth_t)standard_metadata.deq_qdepth;
+
+        hdr.ipv4.ihl = hdr.ipv4.ihl + 2;
+        hdr.ipv4_option.optionLength = hdr.ipv4_option.optionLength + 8; 
+	    hdr.ipv4.totalLen = hdr.ipv4.totalLen + 8;
+    }
+
+    table swtrace {
+        actions = { 
+	        add_swtrace; 
+	        NoAction; 
+        }
+        default_action = NoAction();      
+    }
+    
+
     apply {
         // NOTE: Does not support sending packet to yourself, i.e. h1 send packet to h1 will not work, behaviour undefined!
-        if (hdr.ipv4.isValid() && standard_metadata.egress_port == standard_metadata.ingress_port) {
-            check_pkt_dest.apply();
+        if (hdr.ipv4.isValid()) {
+            swtrace.apply();
+            if (standard_metadata.egress_port == standard_metadata.ingress_port) {
+                check_pkt_dest.apply();
+            }
         }
     }
 }
@@ -227,6 +318,9 @@ control MyDeparser(packet_out packet, in headers hdr) {
     apply {
         packet.emit(hdr.ethernet);
         packet.emit(hdr.ipv4);
+        packet.emit(hdr.ipv4_option);
+        packet.emit(hdr.swtrace_count);
+        packet.emit(hdr.swtraces);
     }
 }
 

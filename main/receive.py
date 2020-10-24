@@ -6,7 +6,7 @@ import os
 from scapy.all import bind_layers
 from scapy.all import sniff, sendp, hexdump, get_if_list, get_if_hwaddr
 from scapy.all import Packet, IPOption
-from scapy.all import ShortField, IntField, LongField, BitField, FieldListField, FieldLenField
+from scapy.all import PacketListField, ShortField, IntField, LongField, BitField, FieldListField, FieldLenField
 from scapy.all import Ether, IP, TCP, UDP, Raw
 from scapy.layers.inet import _IPOption_HDR
 
@@ -27,26 +27,32 @@ def get_if():
         exit(1)
     return iface
 
-class IPOption_MRI(IPOption):
-    name = "MRI"
+class SwitchTrace(Packet):
+    fields_desc = [ IntField("swid", 0),
+                  IntField("qdepth", 0)]
+    def extract_padding(self, p):
+                return "", p
+
+class IPOption_SWTRACE(IPOption):
+    name = "SWTRACE"
     option = 31
     fields_desc = [ _IPOption_HDR,
                     FieldLenField("length", None, fmt="B",
-                                  length_of="swids",
-                                  adjust=lambda pkt,l:l+4),
+                                  length_of="swtraces",
+                                  adjust=lambda pkt,l:l*2+4),
                     ShortField("count", 0),
-                    FieldListField("swids",
+                    PacketListField("swtraces",
                                    [],
-                                   IntField("", 0),
-                                   length_from=lambda pkt:pkt.count*4) ]
+                                   SwitchTrace,
+                                   count_from=lambda pkt:(pkt.count*1)) ]
+
 def handle_pkt(pkt):
     global packets_sniffed
     packets_sniffed += 1
     print "sniffed a packet %d" % packets_sniffed
-    if TCP in pkt and pkt[TCP].dport == 1234:
+    if UDP in pkt and pkt[UDP].dport == 4321:
         print "got a packet"
         pkt.show2()
-    #    hexdump(pkt)
         sys.stdout.flush()
 
 
