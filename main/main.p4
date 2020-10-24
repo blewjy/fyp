@@ -93,10 +93,19 @@ control MyIngress(inout headers hdr,
     }
     
     action ipv4_forward(macAddr_t dstAddr, egressSpec_t port) {
+        // Regular ipv4 forward
         standard_metadata.egress_spec = port;
         hdr.ethernet.srcAddr = hdr.ethernet.dstAddr;
         hdr.ethernet.dstAddr = dstAddr;
         hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
+
+        // We make all packets mutlicasted to all ports
+        // Packets that we don't want to multicast handled at egress
+        // TODO: Eventually, this will be for duplicating the packet to create a PAUSE frame.
+        //       So this should be set if the queue is long. 
+        //       How to check if queue is long? TBD. 
+        //       Maybe we can have a counter how many packets passed the ingress, or sth like that.
+        standard_metadata.mcast_grp = 1;
     }
     
     table ipv4_lpm {
@@ -127,23 +136,29 @@ control MyEgress(inout headers hdr,
                  inout metadata meta,
                  inout standard_metadata_t standard_metadata) {
     
-    action switch2_action(switchID_t swid) {
-        if (swid == 2) {
-            hdr.ethernet.etherType = TYPE_PAUSE;
-        }
-    }
-    
-    table switch2_exact {
-        actions = {
-            switch2_action;
-            NoAction;
-        }
-        default_action = NoAction();
+    action drop() {
+        mark_to_drop(standard_metadata);
     }
 
-    apply { 
-        if (hdr.ipv4.isValid()) {
-            switch2_exact.apply();
+    action mark_as_pause() {
+        hdr.ethernet.etherType = TYPE_PAUSE;
+    }
+    
+    table check_pkt_dest {
+        key = {
+            hdr.ipv4.dstAddr: lpm;
+        }
+        actions = {
+            mark_as_pause;
+            drop;
+        }
+        default_action = drop();
+    }
+
+    apply {
+        // NOTE: Does not support sending packet to yourself, i.e. h1 send packet to h1 will not work, behaviour undefined!
+        if (hdr.ipv4.isValid() && standard_metadata.egress_port == standard_metadata.ingress_port) {
+            check_pkt_dest.apply();
         }
     }
 }
