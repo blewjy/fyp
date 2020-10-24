@@ -276,12 +276,14 @@ control MyEgress(inout headers hdr,
     
 
     apply {
-        // NOTE: Does not support sending packet to yourself, i.e. h1 send packet to h1 will not work, behaviour undefined!
-        if (hdr.ipv4.isValid()) {
+
+        if (hdr.swtrace_count.isValid()) {
             swtrace.apply();
-            if (standard_metadata.egress_port == standard_metadata.ingress_port) {
-                check_pkt_dest.apply();
-            }
+        }
+
+        // NOTE: Does not support sending packet to yourself, i.e. h1 send packet to h1 will not work, behaviour undefined!
+        if (hdr.ipv4.isValid() && standard_metadata.egress_port == standard_metadata.ingress_port) {
+            check_pkt_dest.apply();
         }
     }
 }
