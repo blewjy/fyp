@@ -14,9 +14,19 @@
     {
       "table": "MyEgress.check_pkt_dest",
       "match": {
-        "hdr.ipv4.dstAddr": ["10.0.2.2", 32]
+        "hdr.ipv4.dstAddr": ["10.0.2.2", 32],
+        "standard_metadata.egress_port": 2
       },
-      "action_name": "MyEgress.mark_as_pause",
+      "action_name": "NoAction",
+      "action_params": { }
+    },
+    {
+      "table": "MyEgress.check_pkt_dest",
+      "match": {
+        "hdr.ipv4.dstAddr": ["10.0.1.1", 32],
+        "standard_metadata.egress_port": 1
+      },
+      "action_name": "NoAction",
       "action_params": { }
     },
     {

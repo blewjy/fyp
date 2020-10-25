@@ -52,20 +52,24 @@ def handle_pkt(pkt, iface):
     global packets_sniffed
     packets_sniffed += 1
     if get_if_hwaddr(iface) == pkt[Ether].dst:
-        if UDP in pkt and pkt[UDP].dport == 4321:
+        if IP in pkt and len(pkt[IP].options) > 0:
             global custom_packets_received
             custom_packets_received += 1
             max_qdepth = 0
             for trace in pkt[IP].options[0].swtraces:
                 if trace.qdepth > max_qdepth:
                     max_qdepth = trace.qdepth
-            # print max_qdepth
+            pkt.show2()
+            sys.stdout.flush()
+            print max_qdepth
         else:
             global regular_packets_received
             regular_packets_received += 1
     
-    sys.stdout.write("custom packets: {0}\tiperf packets: {1}\r".format(custom_packets_received, regular_packets_received))
+    # print custom_packets_received, regular_packets_received
+    sys.stdout.write("custom packets: {0}\tregular packets: {1}\r".format(custom_packets_received, regular_packets_received))
     sys.stdout.flush()
+
     # if UDP in pkt and pkt[UDP].dport == 4321:
         # print "got a packet"
         # pkt.show2()

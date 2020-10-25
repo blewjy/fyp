@@ -47,6 +47,19 @@ const bit<16> TYPE_IPV4 = 0x800;
 const bit<5>  IPV4_OPTION_SWTRACE = 31;
 
 #define MAX_HOPS 9
+#define MAX_PORTS 4
+
+// Maintain a 3-bit state for each port
+
+// - 1st bit: Whether this port should send pause frame to upstream
+register<bit<1>>(MAX_PORTS) port_should_pause_states;
+
+// - 2nd bit: Whether this port has already sent the pause frame to upstream
+// register<bit<1>>(MAX_PORTS) port_has_sent_pause_states;
+
+// - 3rd bit: Whether this port has been paused by its downstream
+register<bit<1>>(MAX_PORTS) port_has_been_paused_states;
+
 
 /*************************************************************************
 *********************** H E A D E R S  ***********************************
@@ -204,13 +217,17 @@ control MyIngress(inout headers hdr,
         hdr.ethernet.dstAddr = dstAddr;
         hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
 
-        // We make all packets mutlicasted to all ports
-        // Packets that we don't want to multicast handled at egress
-        // TODO: Eventually, this will be for duplicating the packet to create a PAUSE frame.
-        //       So this should be set if the queue is long. 
-        //       How to check if queue is long? TBD. 
-        //       Maybe we can have a counter how many packets passed the ingress, or sth like that.
-        standard_metadata.mcast_grp = 1;
+        // Check the port_should_pause state for this ingress port
+        bit<1> ingress_port_should_pause;
+        port_should_pause_states.read(ingress_port_should_pause, (bit<32>)standard_metadata.ingress_port);
+        if (ingress_port_should_pause == (bit<1>)1) {
+            // If this ingress port should be paused, then we set this packet as a multicast packet, so that it will duplicate at the egress
+            // Then, we need to check at egress that all multicast packets are dropped, except 2:
+            // - The original packet going towards the original destination out of the original egress_spec should not be dropped
+            // - The duplicated multicast packet going out of the same port it came in from should not be dropped, AND it should be marked as a pause packet.
+            // - The rest of the packets should be dropped.
+            standard_metadata.mcast_grp = 1;
+        }
     }
     
     table ipv4_lpm {
@@ -225,10 +242,23 @@ control MyIngress(inout headers hdr,
         size = 1024;
         default_action = drop();
     }
-    
+
     apply {
+        if (hdr.ethernet.isValid() && hdr.ethernet.etherType == TYPE_PAUSE) {
+            // Mark that this ingress port has been paused by its downstream.
+            port_has_been_paused_states.write((bit<32>)standard_metadata.ingress_port, (bit<1>)1);
+            drop();
+        }
+
         if (hdr.ipv4.isValid()) {
-            ipv4_lpm.apply();
+            // Check if the port has been paused
+            bit<1> egress_spec_has_been_paused;
+            port_has_been_paused_states.read(egress_spec_has_been_paused, (bit<32>)standard_metadata.egress_spec);
+            if (egress_spec_has_been_paused == (bit<1>)1) {
+                drop();
+            } else {
+                ipv4_lpm.apply();
+            }
         }
     }
 }
@@ -252,9 +282,10 @@ control MyEgress(inout headers hdr,
     table check_pkt_dest {
         key = {
             hdr.ipv4.dstAddr: lpm;
+            standard_metadata.egress_port: exact;
         }
         actions = {
-            mark_as_pause;
+            NoAction;
             drop;
         }
         default_action = drop();
@@ -271,6 +302,14 @@ control MyEgress(inout headers hdr,
         hdr.ipv4.ihl = hdr.ipv4.ihl + 2;
         hdr.ipv4_option.optionLength = hdr.ipv4_option.optionLength + 8; 
 	    hdr.ipv4.totalLen = hdr.ipv4.totalLen + 8;
+
+        // If queue length exceed a certain threshold, we mark this port as to be paused
+        bit<1> mark = (bit<1>)0;
+        if ((qdepth_t)standard_metadata.deq_qdepth > (qdepth_t)10) {
+            mark = (bit<1>)1;
+        }
+        port_should_pause_states.write((bit<32>)standard_metadata.ingress_port, mark);
+
     }
 
     table swtrace {
@@ -288,9 +327,14 @@ control MyEgress(inout headers hdr,
             swtrace.apply();
         }
 
-        // NOTE: Does not support sending packet to yourself, i.e. h1 send packet to h1 will not work, behaviour undefined!
-        if (hdr.ipv4.isValid() && standard_metadata.egress_port == standard_metadata.ingress_port) {
-            check_pkt_dest.apply();
+        if (hdr.ipv4.isValid()) {
+            if (standard_metadata.egress_port != standard_metadata.ingress_port) {
+                // If its a valid ipv4 packet and its not going back out the same port it came in, we want to check if the egress_port tallies with destIP
+                check_pkt_dest.apply();
+            } else {
+                // Otherwise, it is going out the same port it came in, this must be a pause packet.
+                mark_as_pause();
+            }
         }
     }
 }
