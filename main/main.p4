@@ -32,6 +32,13 @@ Plan:
 
 
 
+Issues (dev-custom-header-and-iperf branch):
+- So for this branch, the problem is that the PAUSE frame is triggered to be sent when deq_qdepth at the egress pipeline exceeds a certain amount.
+- So far, we can only achieve this if the outgoing link rate is purposefully set to be slow, so we force packets to congest at the egress.
+- However, we can't do this for all the links (or can we?)
+- From the second switch onwards, there's no concept of buffer congestion on the switch, so pause frames are not generated
+- Even if we force them to be generated, we need it to be dependent on the first one because its a CBD.
+- So in that sense this kinda fails...
 
 */
 
@@ -237,7 +244,7 @@ control MyIngress(inout headers hdr,
             port_has_been_paused_states.write((bit<32>)standard_metadata.ingress_port - 1, (bit<1>)1);
             drop();
         } else {
-            
+
             if (hdr.ipv4.isValid()) {
                 ipv4_lpm.apply();
             }
