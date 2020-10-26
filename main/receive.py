@@ -10,12 +10,18 @@ from scapy.all import PacketListField, ShortField, IntField, LongField, BitField
 from scapy.all import Ether, IP, TCP, UDP, Raw
 from scapy.layers.inet import _IPOption_HDR
 
+TYPE_TEMP = 0x1111
+bind_layers(Ether, IP, type=TYPE_TEMP)
+
 TYPE_PAUSE = 0x1212
 bind_layers(Ether, IP, type=TYPE_PAUSE)
 
 packets_sniffed = 0
 regular_packets_received = 0
 custom_packets_received = 0
+pause_packets_received = 0
+
+how_many_pause_should_you_see = -1
 
 def get_if():
     ifs=get_if_list()
@@ -62,12 +68,18 @@ def handle_pkt(pkt, iface):
             pkt.show2()
             sys.stdout.flush()
             print max_qdepth
+            global how_many_pause_should_you_see
+            if how_many_pause_should_you_see < 0 and max_qdepth > 10:
+                how_many_pause_should_you_see = 100 - custom_packets_received
         else:
             global regular_packets_received
             regular_packets_received += 1
+    elif Ether in pkt and pkt[Ether].type == TYPE_PAUSE:
+        global pause_packets_received
+        pause_packets_received += 1
     
     # print custom_packets_received, regular_packets_received
-    sys.stdout.write("custom packets: {0}\tregular packets: {1}\r".format(custom_packets_received, regular_packets_received))
+    sys.stdout.write("custom packets: {0}\tregular packets: {1}\tpause packets: {2} [{3}]\r".format(custom_packets_received, regular_packets_received, pause_packets_received, how_many_pause_should_you_see))
     sys.stdout.flush()
 
     # if UDP in pkt and pkt[UDP].dport == 4321:

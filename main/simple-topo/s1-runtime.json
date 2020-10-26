@@ -14,6 +14,15 @@
     {
       "table": "MyEgress.check_pkt_dest",
       "match": {
+        "hdr.ipv4.dstAddr": ["10.0.1.1", 32],
+        "standard_metadata.egress_port": 1
+      },
+      "action_name": "NoAction",
+      "action_params": { }
+    },
+    {
+      "table": "MyEgress.check_pkt_dest",
+      "match": {
         "hdr.ipv4.dstAddr": ["10.0.2.2", 32],
         "standard_metadata.egress_port": 2
       },
@@ -23,8 +32,17 @@
     {
       "table": "MyEgress.check_pkt_dest",
       "match": {
-        "hdr.ipv4.dstAddr": ["10.0.1.1", 32],
-        "standard_metadata.egress_port": 1
+        "hdr.ipv4.dstAddr": ["10.0.3.3", 32],
+        "standard_metadata.egress_port": 3
+      },
+      "action_name": "NoAction",
+      "action_params": { }
+    },
+    {
+      "table": "MyEgress.check_pkt_dest",
+      "match": {
+        "hdr.ipv4.dstAddr": ["10.0.4.4", 32],
+        "standard_metadata.egress_port": 4
       },
       "action_name": "NoAction",
       "action_params": { }
@@ -53,8 +71,30 @@
       },
       "action_name": "MyIngress.ipv4_forward",
       "action_params": {
-        "dstAddr": "08:00:00:00:02:00",
+        "dstAddr": "08:00:00:00:02:22",
         "port": 2
+      }
+    },
+    {
+      "table": "MyIngress.ipv4_lpm",
+      "match": {
+        "hdr.ipv4.dstAddr": ["10.0.3.3", 32]
+      },
+      "action_name": "MyIngress.ipv4_forward",
+      "action_params": {
+        "dstAddr": "08:00:00:00:03:33",
+        "port": 3
+      }
+    },
+    {
+      "table": "MyIngress.ipv4_lpm",
+      "match": {
+        "hdr.ipv4.dstAddr": ["10.0.4.4", 32]
+      },
+      "action_name": "MyIngress.ipv4_forward",
+      "action_params": {
+        "dstAddr": "08:00:00:00:04:44",
+        "port": 4
       }
     }
   ],
@@ -68,6 +108,14 @@
         },
         {
           "egress_port" : 2,
+          "instance" : 1
+        },
+        {
+          "egress_port" : 3,
+          "instance" : 1
+        },
+        {
+          "egress_port" : 4,
           "instance" : 1
         }
       ]
