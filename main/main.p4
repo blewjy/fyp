@@ -4,7 +4,7 @@
 
 const bit<32> BMV2_V1MODEL_INSTANCE_TYPE_RECIRC = 4;
 
-const bit<16> TYPE_IPV4 = 0x800;
+const bit<16> TYPE_IPV4 = 0x0800;
 const bit<16> TYPE_RECIRC = 0x1111; // defining another EtherType for our RECIRCULATED packets
 const bit<16> TYPE_PAUSE = 0x1212; // defining another EtherType for our PAUSE packets
 const bit<16> TYPE_RESUME = 0x1313; // defining another EtherType for our RESUME packets
@@ -110,9 +110,11 @@ control MyIngress(inout headers hdr,
     
     action ipv4_forward(macAddr_t dstAddr, egressSpec_t port) {
         standard_metadata.egress_spec = port;
-        hdr.ethernet.srcAddr = hdr.ethernet.dstAddr;
-        hdr.ethernet.dstAddr = dstAddr;
-        hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
+        if (!IS_RECIRCULATED(standard_metadata)){
+            hdr.ethernet.srcAddr = hdr.ethernet.dstAddr;
+            hdr.ethernet.dstAddr = dstAddr;
+            hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
+        }
     }
 
     table ipv4_lpm {
@@ -129,6 +131,10 @@ control MyIngress(inout headers hdr,
     }
     
     apply {
+        if (hdr.ipv4.isValid()) {
+            ipv4_lpm.apply();
+        }
+        
         if (hdr.ethernet.isValid()){
             if (hdr.ethernet.etherType == TYPE_PAUSE) {
                 // If this is a PAUSE frame, we pause the egress for this port
@@ -139,10 +145,6 @@ control MyIngress(inout headers hdr,
                 egress_port_paused_state.write((bit<32>)standard_metadata.ingress_port - 1, (bit<1>)0);
                 drop();
             }
-        }
-
-        if (hdr.ipv4.isValid()) {
-            ipv4_lpm.apply();
         }
 
         if (IS_RECIRCULATED(standard_metadata)) {
@@ -170,7 +172,9 @@ control MyEgress(inout headers hdr,
             }
             recirculate(standard_metadata);
         } else {
-            num_recirc_packets.write(0, num_recirculating - 1);
+            if (num_recirculating > 0) {
+                num_recirc_packets.write(0, num_recirculating - 1);
+            }
         }
     }
 }
