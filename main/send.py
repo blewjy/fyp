@@ -70,7 +70,7 @@ def main():
         global num_pkts_sent
         num_pkts_sent += 1
         print "sent %d packets in total" % num_pkts_sent
-        sleep(0.1)
+        sleep(0.3)
     except KeyboardInterrupt:
         raise
 

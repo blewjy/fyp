@@ -8,15 +8,18 @@ const bit<16> TYPE_IPV4 = 0x0800;
 const bit<16> TYPE_RECIRC = 0x1111; // defining another EtherType for our RECIRCULATED packets
 const bit<16> TYPE_PAUSE = 0x1212; // defining another EtherType for our PAUSE packets
 const bit<16> TYPE_RESUME = 0x1313; // defining another EtherType for our RESUME packets
+const bit<16> TYPE_DROP = 0x1414; // defining another EtherType for packets to be dropped (for convenience)
+
 
 #define IS_RECIRCULATED(std_meta) (std_meta.instance_type == BMV2_V1MODEL_INSTANCE_TYPE_RECIRC)
 
 #define MAX_PORTS 4
-#define PAUSE_THRESHOLD 10
+
+const bit<16> PAUSE_THRESHOLD = 10;
 
 register<bit<1>>(MAX_PORTS) egress_port_paused_state;
 
-register<bit<32>>(1) num_recirc_packets;
+register<bit<16>>(1) num_recirc_packets;
 
 /*************************************************************************
 *********************** H E A D E R S  ***********************************
@@ -139,16 +142,32 @@ control MyIngress(inout headers hdr,
             if (hdr.ethernet.etherType == TYPE_PAUSE) {
                 // If this is a PAUSE frame, we pause the egress for this port
                 egress_port_paused_state.write((bit<32>)standard_metadata.ingress_port - 1, (bit<1>)1);
+
+                num_recirc_packets.write(0, (bit<16>)0);
+                hdr.ethernet.etherType = TYPE_DROP;
                 drop();
             } else if (hdr.ethernet.etherType == TYPE_RESUME) {
                 // If this is a RESUME frame, we unpause the egress for this port
                 egress_port_paused_state.write((bit<32>)standard_metadata.ingress_port - 1, (bit<1>)0);
+                hdr.ethernet.etherType = TYPE_DROP;
                 drop();
             }
         }
 
         if (IS_RECIRCULATED(standard_metadata)) {
             hdr.ethernet.etherType = TYPE_RECIRC;
+            // We need to set back the mcast_grp so that the packet doesn't keep multicasting everytime it recirculates.
+            standard_metadata.mcast_grp = 0; 
+        }
+
+        // NOTE: For now, let's put this check in ingress
+        //       If we want to also detect actual long queue in the egress buffer, we can also move this check to egress.
+        bit<16> num_recirculating;
+        num_recirc_packets.read(num_recirculating, 0);
+        if (hdr.ethernet.isValid() && hdr.ethernet.etherType == TYPE_IPV4 && num_recirculating > PAUSE_THRESHOLD) {
+            standard_metadata.mcast_grp = 1;
+            // egress_port_paused_state.write((bit<32>)standard_metadata.egress_spec - 1, (bit<1>)0);
+            // hdr.ethernet.etherType = num_recirculating;
         }
     }
 }
@@ -160,20 +179,54 @@ control MyIngress(inout headers hdr,
 control MyEgress(inout headers hdr,
                  inout metadata meta,
                  inout standard_metadata_t standard_metadata) {
-    apply {
-        bit<1> paused_state;
-        egress_port_paused_state.read(paused_state, (bit<32>)standard_metadata.egress_port - 1);
+    
+    action drop() {
+        hdr.ethernet.etherType = TYPE_DROP;
+        mark_to_drop(standard_metadata);
+    }
 
-        bit<32> num_recirculating;
-        num_recirc_packets.read(num_recirculating, 0);
-        if (paused_state == (bit<1>)1) {
-            if (!IS_RECIRCULATED(standard_metadata)) {
-                num_recirc_packets.write(0, num_recirculating + 1);
-            }
-            recirculate(standard_metadata);
-        } else {
-            if (num_recirculating > 0) {
-                num_recirc_packets.write(0, num_recirculating - 1);
+    action mark_as_pause() {
+        hdr.ethernet.etherType = TYPE_PAUSE;
+    }
+    
+    table check_pkt_dest {
+        key = {
+            hdr.ipv4.dstAddr: lpm;
+            standard_metadata.egress_port: exact;
+        }
+        actions = {
+            NoAction;
+            drop;
+        }
+        default_action = drop();
+    }
+    
+    apply {
+        if (hdr.ipv4.isValid()) {
+            if (standard_metadata.egress_port != standard_metadata.ingress_port) {
+                // If its a valid ipv4 packet and its not going back out the same port it came in, we want to check if the egress_port tallies with destIP
+                check_pkt_dest.apply();
+
+                if (hdr.ethernet.etherType != TYPE_DROP) {
+                    bit<1> paused_state;
+                    egress_port_paused_state.read(paused_state, (bit<32>)standard_metadata.egress_port - 1);
+
+                    bit<16> num_recirculating;
+                    num_recirc_packets.read(num_recirculating, 0);
+                    if (paused_state == (bit<1>)1) {
+                        if (hdr.ethernet.etherType != TYPE_RECIRC) {
+                            num_recirc_packets.write(0, num_recirculating + (bit<16>)1);
+                        }
+                        recirculate(standard_metadata);
+                    } else {
+                        if (num_recirculating > (bit<16>)0) {
+                            num_recirc_packets.write(0, num_recirculating - (bit<16>)1);
+                        }
+                    }
+                }
+            } else {
+                // Otherwise, it is going out the same port it came in, this must be a pause packet.
+                mark_as_pause();
             }
         }
     }
