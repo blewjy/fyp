@@ -216,18 +216,6 @@ control MyIngress(inout headers hdr,
         hdr.ethernet.srcAddr = hdr.ethernet.dstAddr;
         hdr.ethernet.dstAddr = dstAddr;
         hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
-
-        // Check the port_should_pause state for this ingress port
-        bit<1> ingress_port_should_pause;
-        port_should_pause_states.read(ingress_port_should_pause, (bit<32>)standard_metadata.ingress_port);
-        if (ingress_port_should_pause == (bit<1>)1) {
-            // If this ingress port should be paused, then we set this packet as a multicast packet, so that it will duplicate at the egress
-            // Then, we need to check at egress that all multicast packets are dropped, except 2:
-            // - The original packet going towards the original destination out of the original egress_spec should not be dropped
-            // - The duplicated multicast packet going out of the same port it came in from should not be dropped, AND it should be marked as a pause packet.
-            // - The rest of the packets should be dropped.
-            standard_metadata.mcast_grp = 1;
-        }
     }
     
     table ipv4_lpm {
@@ -246,18 +234,33 @@ control MyIngress(inout headers hdr,
     apply {
         if (hdr.ethernet.isValid() && hdr.ethernet.etherType == TYPE_PAUSE) {
             // Mark that this ingress port has been paused by its downstream.
-            port_has_been_paused_states.write((bit<32>)standard_metadata.ingress_port, (bit<1>)1);
+            port_has_been_paused_states.write((bit<32>)standard_metadata.ingress_port - 1, (bit<1>)1);
             drop();
-        }
-
-        if (hdr.ipv4.isValid()) {
-            // Check if the port has been paused
-            bit<1> egress_spec_has_been_paused;
-            port_has_been_paused_states.read(egress_spec_has_been_paused, (bit<32>)standard_metadata.egress_spec);
-            if (egress_spec_has_been_paused == (bit<1>)1) {
-                drop();
-            } else {
+        } else {
+            
+            if (hdr.ipv4.isValid()) {
                 ipv4_lpm.apply();
+            }
+
+            if (hdr.swtrace_count.isValid()) {
+                // Check if this packet's ingress port should be paused
+                bit<1> ingress_port_should_pause;
+                port_should_pause_states.read(ingress_port_should_pause, (bit<32>)standard_metadata.ingress_port - 1);
+                if (ingress_port_should_pause == (bit<1>)1) {
+                    // If this ingress port should be paused, then we set this packet as a multicast packet, so that it will duplicate at the egress
+                    // Then, we need to check at egress that all multicast packets are dropped, except 2:
+                    // - The original packet going towards the original destination out of the original egress_spec should not be dropped
+                    // - The duplicated multicast packet going out of the same port it came in from should not be dropped, AND it should be marked as a pause packet.
+                    // - The rest of the packets should be dropped.
+                    standard_metadata.mcast_grp = 1;
+                }
+
+                // Check if this packet's egress port has been paused
+                bit<1> egress_spec_has_been_paused;
+                port_has_been_paused_states.read(egress_spec_has_been_paused, (bit<32>)standard_metadata.egress_spec - 1);
+                if (egress_spec_has_been_paused == (bit<1>)1) {
+                    drop();
+                }
             }
         }
     }
@@ -303,12 +306,16 @@ control MyEgress(inout headers hdr,
         hdr.ipv4_option.optionLength = hdr.ipv4_option.optionLength + 8; 
 	    hdr.ipv4.totalLen = hdr.ipv4.totalLen + 8;
 
+        // TEMP
+        bit<1> temp_bool;
+        port_should_pause_states.read(temp_bool, (bit<32>)standard_metadata.ingress_port - 1);
+
         // If queue length exceed a certain threshold, we mark this port as to be paused
         bit<1> mark = (bit<1>)0;
-        if ((qdepth_t)standard_metadata.deq_qdepth > (qdepth_t)10) {
+        if (temp_bool == (bit<1>)1 || (qdepth_t)standard_metadata.deq_qdepth > (qdepth_t)10) {
             mark = (bit<1>)1;
         }
-        port_should_pause_states.write((bit<32>)standard_metadata.ingress_port, mark);
+        port_should_pause_states.write((bit<32>)standard_metadata.ingress_port - 1, mark);
 
     }
 
