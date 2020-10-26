@@ -2,15 +2,21 @@
 #include <core.p4>
 #include <v1model.p4>
 
-const bit<32> BMV2_V1MODEL_INSTANCE_TYPE_EGRESS_CLONE  = 2;
-const bit<32> BMV2_V1MODEL_INSTANCE_TYPE_RECIRC        = 4;
+const bit<32> BMV2_V1MODEL_INSTANCE_TYPE_RECIRC = 4;
 
-const bit<16> TYPE_PAUSE = 0x1212; // defining another EtherType for our PAUSE frames (packets)
 const bit<16> TYPE_IPV4 = 0x800;
+const bit<16> TYPE_RECIRC = 0x1111; // defining another EtherType for our RECIRCULATED packets
+const bit<16> TYPE_PAUSE = 0x1212; // defining another EtherType for our PAUSE packets
+const bit<16> TYPE_RESUME = 0x1313; // defining another EtherType for our RESUME packets
 
 #define IS_RECIRCULATED(std_meta) (std_meta.instance_type == BMV2_V1MODEL_INSTANCE_TYPE_RECIRC)
-#define IS_E2E_CLONE(std_meta) (std_meta.instance_type == BMV2_V1MODEL_INSTANCE_TYPE_EGRESS_CLONE)
-const bit<32> E2E_CLONE_SESSION_ID = 11;
+
+#define MAX_PORTS 4
+#define PAUSE_THRESHOLD 10
+
+register<bit<1>>(MAX_PORTS) egress_port_paused_state;
+
+register<bit<32>>(1) num_recirc_packets;
 
 /*************************************************************************
 *********************** H E A D E R S  ***********************************
@@ -68,6 +74,9 @@ parser MyParser(packet_in packet,
         packet.extract(hdr.ethernet);
         transition select(hdr.ethernet.etherType) {
             TYPE_IPV4: parse_ipv4;
+            TYPE_RECIRC: parse_ipv4;
+            TYPE_PAUSE: parse_ipv4;
+            TYPE_RESUME: parse_ipv4;
             default: accept;
         }
     }
@@ -106,19 +115,6 @@ control MyIngress(inout headers hdr,
         hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
     }
 
-    action set_pause_dest(ip4Addr_t dstAddr) {
-        hdr.ipv4.dstAddr = dstAddr;
-    }
-    
-    table pause_exact {
-        actions = {
-            set_pause_dest;
-            drop;
-            NoAction;
-        }
-        default_action = drop();
-    }
-
     table ipv4_lpm {
         key = {
             hdr.ipv4.dstAddr: lpm;
@@ -133,12 +129,24 @@ control MyIngress(inout headers hdr,
     }
     
     apply {
-        if (IS_RECIRCULATED(standard_metadata)) {
-            pause_exact.apply();
-        } 
-        
+        if (hdr.ethernet.isValid()){
+            if (hdr.ethernet.etherType == TYPE_PAUSE) {
+                // If this is a PAUSE frame, we pause the egress for this port
+                egress_port_paused_state.write((bit<32>)standard_metadata.ingress_port - 1, (bit<1>)1);
+                drop();
+            } else if (hdr.ethernet.etherType == TYPE_RESUME) {
+                // If this is a RESUME frame, we unpause the egress for this port
+                egress_port_paused_state.write((bit<32>)standard_metadata.ingress_port - 1, (bit<1>)0);
+                drop();
+            }
+        }
+
         if (hdr.ipv4.isValid()) {
             ipv4_lpm.apply();
+        }
+
+        if (IS_RECIRCULATED(standard_metadata)) {
+            hdr.ethernet.etherType = TYPE_RECIRC;
         }
     }
 }
@@ -150,33 +158,19 @@ control MyIngress(inout headers hdr,
 control MyEgress(inout headers hdr,
                  inout metadata meta,
                  inout standard_metadata_t standard_metadata) {
-    
-    action ethertype_pause(switchID_t swid) {
-        if (swid == 2) {
-            hdr.ethernet.etherType = TYPE_PAUSE;
-        }
-    }
-
-    action do_clone_e2e() {
-        clone(CloneType.E2E, E2E_CLONE_SESSION_ID);
-    }
-    
-    table switch_exact {
-        actions = {
-            ethertype_pause;
-            do_clone_e2e;
-            NoAction;
-        }
-        default_action = NoAction();
-    }
-
     apply {
-        if (IS_E2E_CLONE(standard_metadata)) {
-            // whatever you want to do special for egress-to-egress
-            // clone packets here.
+        bit<1> paused_state;
+        egress_port_paused_state.read(paused_state, (bit<32>)standard_metadata.egress_port - 1);
+
+        bit<32> num_recirculating;
+        num_recirc_packets.read(num_recirculating, 0);
+        if (paused_state == (bit<1>)1) {
+            if (!IS_RECIRCULATED(standard_metadata)) {
+                num_recirc_packets.write(0, num_recirculating + 1);
+            }
             recirculate(standard_metadata);
-        } else if (hdr.ipv4.isValid()) {
-            switch_exact.apply();
+        } else {
+            num_recirc_packets.write(0, num_recirculating - 1);
         }
     }
 }

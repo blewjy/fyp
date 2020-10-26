@@ -4,14 +4,6 @@
   "bmv2_json": "build/main.json",
   "table_entries": [
     {
-      "table": "MyEgress.switch_exact",
-      "default_action": true,
-      "action_name": "MyEgress.ethertype_pause",
-      "action_params": {
-        "swid": 2
-      }
-    },
-    {
       "table": "MyIngress.ipv4_lpm",
       "default_action": true,
       "action_name": "MyIngress.drop",
