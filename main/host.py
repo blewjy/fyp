@@ -44,6 +44,25 @@ def get_if():
         exit(1)
     return iface
 
+class SwitchTrace(Packet):
+    fields_desc = [IntField("swid", 0),
+                  IntField("qdepth", 0),
+                  IntField("numrecirc", 0)]
+    def extract_padding(self, p):
+                return "", p
+
+class IPOption_SWTRACE(IPOption):
+    name = "SWTRACE"
+    option = 31
+    fields_desc = [ _IPOption_HDR,
+                    FieldLenField("length", None, fmt="B",
+                                  length_of="swtraces",
+                                  adjust=lambda pkt,l:l*2+4),
+                    ShortField("count", 0),
+                    PacketListField("swtraces",
+                                   [],
+                                   SwitchTrace,
+                                   count_from=lambda pkt:(pkt.count*1)) ]
 
 def print_state():
    global num_pkts_sent, num_normal_pkts_recv, num_recirc_pkts_recv, num_other_pkts_recv
@@ -61,7 +80,7 @@ class Sender(threading.Thread):
       addr = socket.gethostbyname(self.dest_ip)
       iface = get_if()
 
-      if self.pkt_type == "normal":
+      if self.pkt_type == "normal" or self.pkt_type == "trace":
          ether_type = TYPE_IPV4
       elif self.pkt_type == "recirc":
          ether_type = TYPE_RECIRC
@@ -71,7 +90,10 @@ class Sender(threading.Thread):
          ether_type = TYPE_RESUME
          
       pkt =       Ether(src=get_if_hwaddr(iface), dst="ff:ff:ff:ff:ff:ff", type=ether_type) 
-      pkt = pkt / IP(dst=addr) 
+      if self.pkt_type == "trace":
+        pkt = pkt / IP(dst=addr, options = IPOption_SWTRACE(count=0,swtraces=[])) 
+      else:
+        pkt = pkt / IP(dst=addr) 
       pkt = pkt / UDP(dport=4321, sport=1234) 
 
       # pkt.show2()

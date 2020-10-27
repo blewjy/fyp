@@ -11,11 +11,14 @@ const bit<16> TYPE_PAUSE = 0x1212; // defining another EtherType for our PAUSE p
 const bit<16> TYPE_RESUME = 0x1313; // defining another EtherType for our RESUME packets
 const bit<16> TYPE_DROP = 0x1414; // defining another EtherType for packets to be dropped (for convenience)
 
+const bit<5>  IPV4_OPTION_SWTRACE = 31;
+
 #define IS_E2E_CLONE(std_meta) (std_meta.instance_type == BMV2_V1MODEL_INSTANCE_TYPE_EGRESS_CLONE)
 const bit<32> E2E_CLONE_SESSION_ID = 11;
 
 #define IS_RECIRCULATED(std_meta) (std_meta.instance_type == BMV2_V1MODEL_INSTANCE_TYPE_RECIRC)
 
+#define MAX_HOPS 9
 #define MAX_PORTS 4
 
 const bit<16> PAUSE_THRESHOLD = 10;
@@ -35,6 +38,8 @@ typedef bit<9>  egressSpec_t;
 typedef bit<48> macAddr_t;
 typedef bit<32> ip4Addr_t;
 typedef bit<32> switchID_t;
+typedef bit<32> qdepth_t;
+
 
 header ethernet_t {
     macAddr_t dstAddr;
@@ -57,14 +62,45 @@ header ipv4_t {
     ip4Addr_t dstAddr;
 }
 
+header ipv4_option_t {
+    bit<1> copyFlag;
+    bit<2> optClass;
+    bit<5> option;
+    bit<8> optionLength;
+}
+
+header swtrace_count_t {
+    bit<16> count;
+}
+
+header swtrace_t {
+    switchID_t  swid;
+    qdepth_t    qdepth;
+    bit<32>     numrecirc;
+}
+
+struct ingress_metadata_t {
+    bit<16>  count;
+}
+
+struct parser_metadata_t {
+    bit<16>  remaining;
+}
+
 struct metadata {
-    /* empty */
+    ingress_metadata_t ingress_metadata;
+    parser_metadata_t parser_metadata;
 }
 
 struct headers {
-    ethernet_t   ethernet;
-    ipv4_t       ipv4;
+    ethernet_t          ethernet;
+    ipv4_t              ipv4;
+    ipv4_option_t       ipv4_option;
+    swtrace_count_t     swtrace_count;
+    swtrace_t[MAX_HOPS] swtraces;
 }
+
+error { IPHeaderTooShort }
 
 /*************************************************************************
 *********************** P A R S E R  ***********************************
@@ -92,8 +128,38 @@ parser MyParser(packet_in packet,
 
     state parse_ipv4 {
         packet.extract(hdr.ipv4);
-        transition accept;
+        verify(hdr.ipv4.ihl >= 5, error.IPHeaderTooShort);
+        transition select(hdr.ipv4.ihl) {
+            5             : accept;
+            default       : parse_ipv4_option;
+        }    
     }
+
+    state parse_ipv4_option {
+        packet.extract(hdr.ipv4_option);
+        transition select(hdr.ipv4_option.option) {
+            IPV4_OPTION_SWTRACE: parse_swtrace_count;
+            default: accept;
+        }
+    }
+
+    state parse_swtrace_count {
+        packet.extract(hdr.swtrace_count);
+        meta.parser_metadata.remaining = hdr.swtrace_count.count;
+        transition select(meta.parser_metadata.remaining) {
+            0: accept;
+            default: parse_swtrace;
+        }
+    }
+
+    state parse_swtrace {
+        packet.extract(hdr.swtraces.next);
+        meta.parser_metadata.remaining = meta.parser_metadata.remaining - 1;
+        transition select(meta.parser_metadata.remaining) {
+            0: accept;
+            default: parse_swtrace;
+        }
+    }   
 
 }
 
@@ -207,6 +273,32 @@ control MyEgress(inout headers hdr,
         hdr.ethernet.etherType = TYPE_DROP;
         mark_to_drop(standard_metadata);
     }
+
+    action add_swtrace(switchID_t swid) { 
+        hdr.swtrace_count.count = hdr.swtrace_count.count + 1;
+        hdr.swtraces.push_front(1);
+
+        hdr.swtraces[0].setValid();
+        hdr.swtraces[0].swid = swid;
+        hdr.swtraces[0].qdepth = (qdepth_t)standard_metadata.deq_qdepth;
+
+        bit<16> num_recirculating;
+        num_recirc_packets.read(num_recirculating, 0);
+        hdr.swtraces[0].numrecirc = (bit<32>)num_recirculating;
+
+        hdr.ipv4.ihl = hdr.ipv4.ihl + 3;
+        hdr.ipv4_option.optionLength = hdr.ipv4_option.optionLength + 12; 
+        hdr.ipv4.totalLen = hdr.ipv4.totalLen + 12;
+    }
+
+    table swtrace {
+        actions = { 
+            add_swtrace; 
+            NoAction; 
+        }
+        default_action = NoAction();      
+    }
+    
     
     table check_pkt_dest {
         key = {
@@ -221,6 +313,8 @@ control MyEgress(inout headers hdr,
     }
     
     apply {
+        
+
         if (hdr.ipv4.isValid()) {
             if (standard_metadata.egress_port != standard_metadata.ingress_port) {
                 // If its a valid ipv4 packet and its not going back out the same port it came in, we want to check if the egress_port tallies with destIP
@@ -255,6 +349,13 @@ control MyEgress(inout headers hdr,
                                     recirculate(standard_metadata);
                                 }
                             }
+                        }
+
+                        // TODO: Cannot really put here... 
+                        //       Because those packets that are recirculated for the resume packet will double apply this table.
+                        //       But it doesn't really affect functionality so I'm leaving it here for now.
+                        if (hdr.swtrace_count.isValid()) {
+                            swtrace.apply();
                         }
                     }
                 }
@@ -304,6 +405,11 @@ control MyDeparser(packet_out packet, in headers hdr) {
     apply {
         packet.emit(hdr.ethernet);
         packet.emit(hdr.ipv4);
+        packet.emit(hdr.ipv4_option);
+        packet.emit(hdr.swtrace_count);
+        packet.emit(hdr.swtraces);
+
+
     }
 }
 

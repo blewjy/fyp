@@ -34,6 +34,25 @@ def get_if():
         exit(1)
     return iface
 
+class SwitchTrace(Packet):
+    fields_desc = [ IntField("swid", 0),
+                  IntField("qdepth", 0),
+                  IntField("numrecirc", 0)]
+    def extract_padding(self, p):
+                return "", p
+
+class IPOption_SWTRACE(IPOption):
+    name = "SWTRACE"
+    option = 31
+    fields_desc = [ _IPOption_HDR,
+                    FieldLenField("length", None, fmt="B",
+                                  length_of="swtraces",
+                                  adjust=lambda pkt,l:l*2+4),
+                    ShortField("count", 0),
+                    PacketListField("swtraces",
+                                   [],
+                                   SwitchTrace,
+                                   count_from=lambda pkt:(pkt.count*1)) ]
 
 def handle_pkt(pkt, iface):
     if Ether in pkt:
@@ -55,8 +74,11 @@ def handle_pkt(pkt, iface):
             print "normal: {0}\trecirc: {1}\tother:{2}".format(num_normal_pkts, num_recirc_pkts, num_other_pkts)
         
 
-        # pkt.show2()
-        # sys.stdout.flush()
+            if IP in pkt and len(pkt[IP].options) > 0:
+                for trace in pkt[IP].options[0].swtraces:
+                    print trace.swid, trace.qdepth, trace.numrecirc
+            # pkt.show2()
+            sys.stdout.flush()
 
 def main():
     iface = 'eth0'

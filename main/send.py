@@ -38,6 +38,26 @@ def get_if():
         exit(1)
     return iface
 
+class SwitchTrace(Packet):
+    fields_desc = [IntField("swid", 0),
+                  IntField("qdepth", 0),
+                  IntField("numrecirc", 0)]
+    def extract_padding(self, p):
+                return "", p
+
+class IPOption_SWTRACE(IPOption):
+    name = "SWTRACE"
+    option = 31
+    fields_desc = [ _IPOption_HDR,
+                    FieldLenField("length", None, fmt="B",
+                                  length_of="swtraces",
+                                  adjust=lambda pkt,l:l*2+4),
+                    ShortField("count", 0),
+                    PacketListField("swtraces",
+                                   [],
+                                   SwitchTrace,
+                                   count_from=lambda pkt:(pkt.count*1)) ]
+
 
 def main():
 
@@ -48,7 +68,7 @@ def main():
     addr = socket.gethostbyname(sys.argv[1])
     iface = get_if()
 
-    if sys.argv[3] == "normal":
+    if sys.argv[3] == "normal" or sys.argv[3] == "trace":
         ether_type = TYPE_IPV4
     elif sys.argv[3] == "recirc":
         ether_type = TYPE_RECIRC
@@ -58,7 +78,10 @@ def main():
         ether_type = TYPE_RESUME
         
     pkt =       Ether(src=get_if_hwaddr(iface), dst="ff:ff:ff:ff:ff:ff", type=ether_type) 
-    pkt = pkt / IP(dst=addr) 
+    if sys.argv[3] == "trace":
+        pkt = pkt / IP(dst=addr, options = IPOption_SWTRACE(count=0,swtraces=[])) 
+    else:
+        pkt = pkt / IP(dst=addr) 
     pkt = pkt / UDP(dport=4321, sport=1234) 
     pkt = pkt / sys.argv[2]
 
