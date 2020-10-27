@@ -178,7 +178,7 @@ control MyIngress(inout headers hdr,
         //       Because we are implementing the pause in a per port basis, not per flow, not per priority.
         //       But this implementation is still ok for simple topo like what we are doing now.
         if (hdr.ethernet.isValid() && hdr.ethernet.etherType == TYPE_IPV4 && num_recirculating > PAUSE_THRESHOLD) {
-            bit<1> has_paused_upstream;
+            standard_metadata.mcast_grp = 1;
         }
 
         // However, when we want to resume, we cannot use new incoming packets to trigger the resume, because there might not be any new incoming packets (all incoming flows may have been paused)
