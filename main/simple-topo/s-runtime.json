@@ -63,6 +63,19 @@
             "instance" : 1
           }
         ]
+      },
+      {
+        "multicast_group_id" : 2,
+        "replicas" : [
+          {
+            "egress_port" : 1,
+            "instance" : 1
+          },
+          {
+            "egress_port" : 2,
+            "instance" : 1
+          }
+        ]
       }
     ]
   }

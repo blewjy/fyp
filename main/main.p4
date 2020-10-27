@@ -3,6 +3,7 @@
 #include <v1model.p4>
 
 const bit<32> BMV2_V1MODEL_INSTANCE_TYPE_RECIRC = 4;
+const bit<32> BMV2_V1MODEL_INSTANCE_TYPE_EGRESS_CLONE  = 2;
 
 const bit<16> TYPE_IPV4 = 0x0800;
 const bit<16> TYPE_RECIRC = 0x1111; // defining another EtherType for our RECIRCULATED packets
@@ -10,14 +11,19 @@ const bit<16> TYPE_PAUSE = 0x1212; // defining another EtherType for our PAUSE p
 const bit<16> TYPE_RESUME = 0x1313; // defining another EtherType for our RESUME packets
 const bit<16> TYPE_DROP = 0x1414; // defining another EtherType for packets to be dropped (for convenience)
 
+#define IS_E2E_CLONE(std_meta) (std_meta.instance_type == BMV2_V1MODEL_INSTANCE_TYPE_EGRESS_CLONE)
+const bit<32> E2E_CLONE_SESSION_ID = 11;
 
 #define IS_RECIRCULATED(std_meta) (std_meta.instance_type == BMV2_V1MODEL_INSTANCE_TYPE_RECIRC)
 
 #define MAX_PORTS 4
 
 const bit<16> PAUSE_THRESHOLD = 10;
+const bit<16> RESUME_THRESHOLD = 4;
+
 
 register<bit<1>>(MAX_PORTS) egress_port_paused_state;
+register<bit<1>>(MAX_PORTS) has_paused_upstream_port_state;
 
 register<bit<16>>(1) num_recirc_packets;
 
@@ -164,10 +170,27 @@ control MyIngress(inout headers hdr,
         //       If we want to also detect actual long queue in the egress buffer, we can also move this check to egress.
         bit<16> num_recirculating;
         num_recirc_packets.read(num_recirculating, 0);
+
+        // For every new packet (non-recirc, TYPE_IPV4 only), if buffer capacity already past threshold, we should send a pause packet to the flow's upstream.
+        // It's ok to send multiple pause packets towards the same port, as there might be multiple flows through that port.
+        // With this logic, each flow will only receive 1 pause packet.
+        // NOTE: Actually... Each port should only need to receive 1 pause packet, no matter which flow.
+        //       Because we are implementing the pause in a per port basis, not per flow, not per priority.
+        //       But this implementation is still ok for simple topo like what we are doing now.
         if (hdr.ethernet.isValid() && hdr.ethernet.etherType == TYPE_IPV4 && num_recirculating > PAUSE_THRESHOLD) {
-            standard_metadata.mcast_grp = 1;
-            // egress_port_paused_state.write((bit<32>)standard_metadata.egress_spec - 1, (bit<1>)0);
-            // hdr.ethernet.etherType = num_recirculating;
+            bit<1> has_paused_upstream;
+        }
+
+        // However, when we want to resume, we cannot use new incoming packets to trigger the resume, because there might not be any new incoming packets (all incoming flows may have been paused)
+        // Resume needs to be triggered with currently recirculating packets
+        // We check for resume condition in egress and force some packets to recirc.
+        // Those forced recirc packets are caught here and multicasted as resume frames.
+        if (hdr.ethernet.isValid() && hdr.ethernet.etherType == TYPE_RECIRC && (bit<32>)num_recirculating < MAX_PORTS) {
+            bit<1> has_paused_upstream;
+            has_paused_upstream_port_state.read(has_paused_upstream, (bit<32>)standard_metadata.ingress_port - 1);
+            if (has_paused_upstream == (bit<1>)1) {
+                standard_metadata.mcast_grp = 2;
+            }
         }
     }
 }
@@ -183,10 +206,6 @@ control MyEgress(inout headers hdr,
     action drop() {
         hdr.ethernet.etherType = TYPE_DROP;
         mark_to_drop(standard_metadata);
-    }
-
-    action mark_as_pause() {
-        hdr.ethernet.etherType = TYPE_PAUSE;
     }
     
     table check_pkt_dest {
@@ -219,14 +238,35 @@ control MyEgress(inout headers hdr,
                         }
                         recirculate(standard_metadata);
                     } else {
+                        // If there are more than 0 num_recirculating, we can safely decrement
                         if (num_recirculating > (bit<16>)0) {
                             num_recirc_packets.write(0, num_recirculating - (bit<16>)1);
+
+                            // If there are less than MAX_PORTS recirculating packets, then we check whether its index's upstream has been paused.
+                            // If it has been paused, we need to resume it.
+                            num_recirc_packets.read(num_recirculating, 0);
+                            if ((bit<32>)num_recirculating < MAX_PORTS) {
+                                bit<1> has_paused_upstream;
+                                has_paused_upstream_port_state.read(has_paused_upstream, (bit<32>)num_recirculating);
+                                if (has_paused_upstream == (bit<1>)1) {
+                                    // TODO: At this point, before recirculate, we have to put (bit<32>)num_recirculating inside the packet somehow,
+                                    //       because the ingress pipeline later needs to know which port to send the resume frame to.
+                                    //       This output port for this resume frame does not necessarily need to be the same port as the ingress_port of the original packet.
+                                    recirculate(standard_metadata);
+                                }
+                            }
                         }
                     }
                 }
             } else {
-                // Otherwise, it is going out the same port it came in, this must be a pause packet.
-                mark_as_pause();
+                // Otherwise, it is going out the same port it came in, this must be a pause/resume packet.
+                 if (standard_metadata.mcast_grp == 1) {
+                    hdr.ethernet.etherType = TYPE_PAUSE;
+                    has_paused_upstream_port_state.write((bit<32>)standard_metadata.egress_port - 1, (bit<1>)1);
+                } else if (standard_metadata.mcast_grp == 2) {
+                    hdr.ethernet.etherType = TYPE_RESUME;
+                    has_paused_upstream_port_state.write((bit<32>)standard_metadata.egress_port - 1, (bit<1>)0);
+                }
             }
         }
     }
