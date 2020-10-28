@@ -1,72 +1,15 @@
-/*
-Plan: 
-- We want to implement the PFC PAUSE frame sending mechanism in the data-plane, and we want to see that it works
-- i.e. we want to see that when the buffer reaches a certain threshold, PAUSE frame is sent, and packets stop coming into the switch.
-- Then, when the buffer clears, we want the RESUME frame to be sent, and packets continue to come in.
-
-- So we have two types of packets, differentiated with a custom header. Similar to the MRI example.
-- Those packets with custom headers are "our" packets, which we will pause.
-- Packets without custom headers will be packets from a separate iperf flow. These will help to increase our queue length.
-
-- Start with the simple h1--s1--s2--h2 topology.
-- If we start sending "our" packets from h1 to h2, we should see "our" packets arriving at h2.
-- Now, we want to see what parameters for our iperf flow will there be substantial queue length increase. Then we see where it stabilizes.
-- At any of the switches, if it encounters that threshold, PAUSE frame will be sent backwards.
-- Each switch has a flag at each port to check if its paused. If it is, all "our" packets (with the custom headers) will be dropped. This simulates the "pause".
-- If the flow is paused, means that h2 will stop receiving "our" packets 
-  - a cool way to visualize this maybe with rate? like count how many packets per second the receiver is receiving.
-  - we can send maybe 10 packets per second
-  - receiver should receive about 10 packets per second if no interruption
-  - once paused, it should go down to 0 packets per second
-  - then back up to 10 packets per second when resume
-- Because we only have 2 switches, only s1 will receive the pause frame from s2, and only s1 will drop "our" packets.
-- Once the switch sees that the queue has cleared, and if the switch itself is not paused, then RESUME frame will be sent.
-  - gotta experiment what should be the definition of "queue has cleared"
-  - probably when our custom packet comes in and the switch sees like 5 consecutive packets with 0 deq_qdepth, then consider clear
-- Then the upstream switch will continue forwarding the packets.
-- And we should see "our" packets arriving at h2.
-
-- If we can replicate this behaviour with the simple topology, then we try to go for the CBD topology which will cause the deadlock
-- We consider that the deadlock is detected if after we relax the iperf sending, we still do not see "our" packets arriving at the receiving hosts.
-- This is because the RESUME frame cannot be sent out by the switches, as they themselves are paused. 
-
-
-
-Issues (dev-custom-header-and-iperf branch):
-- So for this branch, the problem is that the PAUSE frame is triggered to be sent when deq_qdepth at the egress pipeline exceeds a certain amount.
-- So far, we can only achieve this if the outgoing link rate is purposefully set to be slow, so we force packets to congest at the egress.
-- However, we can't do this for all the links (or can we?)
-- From the second switch onwards, there's no concept of buffer congestion on the switch, so pause frames are not generated
-- Even if we force them to be generated, we need it to be dependent on the first one because its a CBD.
-- So in that sense this kinda fails...
-
-*/
-
-
-
 /* -*- P4_16 -*- */
 #include <core.p4>
 #include <v1model.p4>
 
-const bit<16> TYPE_PAUSE = 0x1212; // defining another EtherType for our PAUSE frames (packets)
-const bit<16> TYPE_IPV4 = 0x800;
+const bit<16> TYPE_IPV4   = 0x800;
+const bit<16> TYPE_PAUSE  = 0x1212; // defining another EtherType for our PAUSE frames
+const bit<16> TYPE_RESUME = 0x1313; // defining another EtherType for our RESUME frames
 
 const bit<5>  IPV4_OPTION_SWTRACE = 31;
 
-#define MAX_HOPS 9
+#define MAX_HOPS  9
 #define MAX_PORTS 4
-
-// Maintain a 3-bit state for each port
-
-// - 1st bit: Whether this port should send pause frame to upstream
-register<bit<1>>(MAX_PORTS) port_should_pause_states;
-
-// - 2nd bit: Whether this port has already sent the pause frame to upstream
-// register<bit<1>>(MAX_PORTS) port_has_sent_pause_states;
-
-// - 3rd bit: Whether this port has been paused by its downstream
-register<bit<1>>(MAX_PORTS) port_has_been_paused_states;
-
 
 /*************************************************************************
 *********************** H E A D E R S  ***********************************
@@ -76,7 +19,7 @@ typedef bit<9>  egressSpec_t;
 typedef bit<48> macAddr_t;
 typedef bit<32> ip4Addr_t;
 typedef bit<32> switchID_t;
-typedef bit<32> qdepth_t;
+typedef bit<32> bufferCount_t;
 
 header ethernet_t {
     macAddr_t dstAddr;
@@ -111,16 +54,16 @@ header swtrace_count_t {
 }
 
 header swtrace_t {
-    switchID_t  swid;
-    qdepth_t    qdepth;
+    switchID_t    swid;
+    bufferCount_t buffercount;
 }
 
 struct ingress_metadata_t {
-    bit<16>  count;
+    bit<16> count;
 }
 
 struct parser_metadata_t {
-    bit<16>  remaining;
+    bit<16> remaining;
 }
 
 struct metadata {
@@ -239,37 +182,32 @@ control MyIngress(inout headers hdr,
     }
 
     apply {
-        if (hdr.ethernet.isValid() && hdr.ethernet.etherType == TYPE_PAUSE) {
-            // Mark that this ingress port has been paused by its downstream.
-            port_has_been_paused_states.write((bit<32>)standard_metadata.ingress_port - 1, (bit<1>)1);
-            drop();
-        } else {
+     
+        if (hdr.ipv4.isValid()) {
+            ipv4_lpm.apply();
+        }
 
-            if (hdr.ipv4.isValid()) {
-                ipv4_lpm.apply();
+        if (hdr.swtrace_count.isValid()) {
+            // Check if this packet's ingress port should be paused
+            bit<1> ingress_port_should_pause;
+            port_should_pause_states.read(ingress_port_should_pause, (bit<32>)standard_metadata.ingress_port - 1);
+            if (ingress_port_should_pause == (bit<1>)1) {
+                // If this ingress port should be paused, then we set this packet as a multicast packet, so that it will duplicate at the egress
+                // Then, we need to check at egress that all multicast packets are dropped, except 2:
+                // - The original packet going towards the original destination out of the original egress_spec should not be dropped
+                // - The duplicated multicast packet going out of the same port it came in from should not be dropped, AND it should be marked as a pause packet.
+                // - The rest of the packets should be dropped.
+                standard_metadata.mcast_grp = 1;
             }
 
-            if (hdr.swtrace_count.isValid()) {
-                // Check if this packet's ingress port should be paused
-                bit<1> ingress_port_should_pause;
-                port_should_pause_states.read(ingress_port_should_pause, (bit<32>)standard_metadata.ingress_port - 1);
-                if (ingress_port_should_pause == (bit<1>)1) {
-                    // If this ingress port should be paused, then we set this packet as a multicast packet, so that it will duplicate at the egress
-                    // Then, we need to check at egress that all multicast packets are dropped, except 2:
-                    // - The original packet going towards the original destination out of the original egress_spec should not be dropped
-                    // - The duplicated multicast packet going out of the same port it came in from should not be dropped, AND it should be marked as a pause packet.
-                    // - The rest of the packets should be dropped.
-                    standard_metadata.mcast_grp = 1;
-                }
-
-                // Check if this packet's egress port has been paused
-                bit<1> egress_spec_has_been_paused;
-                port_has_been_paused_states.read(egress_spec_has_been_paused, (bit<32>)standard_metadata.egress_spec - 1);
-                if (egress_spec_has_been_paused == (bit<1>)1) {
-                    drop();
-                }
+            // Check if this packet's egress port has been paused
+            bit<1> egress_spec_has_been_paused;
+            port_has_been_paused_states.read(egress_spec_has_been_paused, (bit<32>)standard_metadata.egress_spec - 1);
+            if (egress_spec_has_been_paused == (bit<1>)1) {
+                drop();
             }
         }
+        
     }
 }
 
@@ -396,10 +334,10 @@ control MyDeparser(packet_out packet, in headers hdr) {
 *************************************************************************/
 
 V1Switch(
-MyParser(),
-MyVerifyChecksum(),
-MyIngress(),
-MyEgress(),
-MyComputeChecksum(),
-MyDeparser()
+    MyParser(),
+    MyVerifyChecksum(),
+    MyIngress(),
+    MyEgress(),
+    MyComputeChecksum(),
+    MyDeparser()
 ) main;
