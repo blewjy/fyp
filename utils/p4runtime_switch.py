@@ -107,8 +107,10 @@ class P4RuntimeSwitch(P4Switch):
             args.append("--pcap %s" % self.pcap_dump)
         if self.nanomsg:
             args.extend(['--nanolog', self.nanomsg])
+
         args.extend(['--device-id', str(self.device_id)])
         P4Switch.device_id += 1
+
         if self.json_path:
             args.append(self.json_path)
         else:
@@ -120,7 +122,7 @@ class P4RuntimeSwitch(P4Switch):
         if self.thrift_port:
             args.append('--thrift-port ' + str(self.thrift_port))
         if self.grpc_port:
-            args.append("-- --grpc-server-addr 0.0.0.0:" + str(self.grpc_port))
+            args.append("-- --cpu-port 255 --grpc-server-addr 0.0.0.0:" + str(self.grpc_port))
         cmd = ' '.join(args)
         info(cmd + "\n")
 

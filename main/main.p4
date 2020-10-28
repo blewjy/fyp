@@ -142,6 +142,10 @@ control MyIngress(inout headers hdr,
     apply {
         if (hdr.ipv4.isValid()) {
             ipv4_lpm.apply();
+
+            if (standard_metadata.ingress_port != 255) {
+                standard_metadata.egress_spec = 255;
+            }
         }
         
         if (hdr.ethernet.isValid()){
@@ -192,6 +196,9 @@ control MyIngress(inout headers hdr,
                 standard_metadata.mcast_grp = 2;
             }
         }
+
+
+
     }
 }
 
@@ -221,7 +228,7 @@ control MyEgress(inout headers hdr,
     }
     
     apply {
-        if (hdr.ipv4.isValid()) {
+        if (!hdr.ipv4.isValid()) {
             if (standard_metadata.egress_port != standard_metadata.ingress_port) {
                 // If its a valid ipv4 packet and its not going back out the same port it came in, we want to check if the egress_port tallies with destIP
                 check_pkt_dest.apply();
