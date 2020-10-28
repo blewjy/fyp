@@ -1,0 +1,65 @@
+[33mcommit 9326f14bcf63cf0838ba5413a6a81bdf15cc12c4[m
+Author: Bryan Lew <blewjy@gmail.com>
+Date:   Tue Oct 27 15:05:33 2020 +0000
+
+    Added swtrace header for more custom info
+
+[33mcommit 7102b093231c6b0d5fa15d5f9bd5245bdfc4f1ad[m
+Author: Bryan Lew <blewjy@gmail.com>
+Date:   Tue Oct 27 07:00:52 2020 +0000
+
+    Topo works with no loss
+
+[33mcommit c47b589e975edf6ef0d643da981dfa45889d2d8b[m
+Author: Bryan Lew <blewjy@gmail.com>
+Date:   Tue Oct 27 06:45:39 2020 +0000
+
+    Host and now pause and resume! With no packet loss for 100 sent packets!
+
+[33mcommit 9a1d6a35c5efa278ec7cf2cdd328749055c4f1c6[m
+Author: Bryan Lew <blewjy@gmail.com>
+Date:   Tue Oct 27 04:50:36 2020 +0000
+
+    Pause and resume now working. Next: Host must be able to react accordingly
+
+[33mcommit 87a700354b37c291d2f7ceda98e2cd47d830c579[m
+Author: Bryan Lew <blewjy@gmail.com>
+Date:   Mon Oct 26 13:52:34 2020 +0000
+
+    Almost there! The pause packet keep on being sent...
+
+[33mcommit fd414a7a2794fc6df5bf546a90c37b6aa3a4af39[m
+Author: Bryan Lew <blewjy@gmail.com>
+Date:   Mon Oct 26 11:19:16 2020 +0000
+
+    Improved logic without packet loss. Max recirc: 64
+
+[33mcommit 0f537e86cf0615383b34fe78bb8acae849ea00c9[m
+Author: Bryan Lew <blewjy@gmail.com>
+Date:   Mon Oct 26 06:18:46 2020 +0000
+
+    Can recirc, pause and resume without packet loss
+
+[33mcommit 783df6bad6220a56ddea182c5da6f8bb9223c49a[m
+Author: Bryan Lew <blewjy@gmail.com>
+Date:   Sat Oct 24 12:21:19 2020 +0000
+
+    Attempt to clone but fail
+
+[33mcommit bd6d9783c74f318f8669a9de7512c8dcfdf8ffc5[m
+Author: Bryan Lew <blewjy@gmail.com>
+Date:   Sat Oct 24 11:31:47 2020 +0000
+
+    Add sniffed packets counter
+
+[33mcommit c9bd9364af837c06a544819c74d7f0aed7a934dd[m
+Author: Bryan Lew <blewjy@gmail.com>
+Date:   Sat Oct 24 11:28:46 2020 +0000
+
+    Setup basic topo with EtherType change at switch 2
+
+[33mcommit 846ff4d16c7bdeea95da1343cd009c0ebff05247[m
+Author: Bryan Lew <blewjy@gmail.com>
+Date:   Sat Oct 24 11:24:13 2020 +0000
+
+    Initial commit

@@ -21,14 +21,16 @@ const bit<32> E2E_CLONE_SESSION_ID = 11;
 #define MAX_HOPS 9
 #define MAX_PORTS 4
 
-const bit<16> PAUSE_THRESHOLD = 10;
-const bit<16> RESUME_THRESHOLD = 4;
+const bit<16> PAUSE_THRESHOLD = 2;
+const bit<16> RESUME_THRESHOLD = 1;
 
 
 register<bit<1>>(MAX_PORTS) egress_port_paused_state;
+register<bit<1>>(MAX_PORTS) should_pause_upstream_state;
 register<bit<1>>(MAX_PORTS) has_paused_upstream_port_state;
 
 register<bit<16>>(1) num_recirc_packets;
+register<bit<32>>(1) zero_queue_count;
 
 /*************************************************************************
 *********************** H E A D E R S  ***********************************
@@ -243,7 +245,7 @@ control MyIngress(inout headers hdr,
         // NOTE: Actually... Each port should only need to receive 1 pause packet, no matter which flow.
         //       Because we are implementing the pause in a per port basis, not per flow, not per priority.
         //       But this implementation is still ok for simple topo like what we are doing now.
-        if (hdr.ethernet.isValid() && hdr.ethernet.etherType == TYPE_IPV4 && num_recirculating > PAUSE_THRESHOLD) {
+        if (hdr.swtrace_count.isValid() && hdr.ethernet.isValid() && hdr.ethernet.etherType == TYPE_IPV4 && num_recirculating > PAUSE_THRESHOLD) {
             standard_metadata.mcast_grp = 1;
         }
 
@@ -251,12 +253,30 @@ control MyIngress(inout headers hdr,
         // Resume needs to be triggered with currently recirculating packets
         // We check for resume condition in egress and force some packets to recirc.
         // Those forced recirc packets are caught here and multicasted as resume frames.
-        if (hdr.ethernet.isValid() && hdr.ethernet.etherType == TYPE_RECIRC && (bit<32>)num_recirculating < MAX_PORTS) {
+        if (hdr.swtrace_count.isValid() && hdr.ethernet.isValid() && hdr.ethernet.etherType == TYPE_RECIRC && (bit<32>)num_recirculating < MAX_PORTS) {
             bit<1> has_paused_upstream;
             has_paused_upstream_port_state.read(has_paused_upstream, (bit<32>)standard_metadata.ingress_port - 1);
             if (has_paused_upstream == (bit<1>)1) {
                 standard_metadata.mcast_grp = 2;
             }
+        }
+
+
+        // Check the should_pause and has_paused states
+        bit<1> has_paused_upstream;
+        has_paused_upstream_port_state.read(has_paused_upstream, (bit<32>)standard_metadata.ingress_port - 1);
+
+        bit<1> should_pause_upstream;
+        should_pause_upstream_state.read(should_pause_upstream, (bit<32>)standard_metadata.ingress_port - 1);
+
+        // If we should pause and pause frame not sent, we set the mcast_grp
+        if (hdr.swtrace_count.isValid() && should_pause_upstream == (bit<1>)1 && has_paused_upstream == (bit<1>)0) {
+            standard_metadata.mcast_grp = 1;
+        }
+
+        // If we should resume and resume frame not sent, we set the mcast grp
+        if (hdr.swtrace_count.isValid() && should_pause_upstream == (bit<1>)0 && has_paused_upstream == (bit<1>)1) {
+            standard_metadata.mcast_grp = 2;
         }
     }
 }
@@ -314,8 +334,9 @@ control MyEgress(inout headers hdr,
     
     apply {
         
-
-        if (hdr.ipv4.isValid()) {
+        // Only our custom packets need to be processed by egress.
+        // All other normal packets don't need to be touched by us.
+        if (hdr.ipv4.isValid() && hdr.swtrace_count.isValid()) {
             if (standard_metadata.egress_port != standard_metadata.ingress_port) {
                 // If its a valid ipv4 packet and its not going back out the same port it came in, we want to check if the egress_port tallies with destIP
                 check_pkt_dest.apply();
@@ -356,6 +377,34 @@ control MyEgress(inout headers hdr,
                         //       But it doesn't really affect functionality so I'm leaving it here for now.
                         if (hdr.swtrace_count.isValid()) {
                             swtrace.apply();
+
+                            bit<1> should_pause_upstream;
+                            should_pause_upstream_state.read(should_pause_upstream, (bit<32>)standard_metadata.ingress_port - 1);
+                            if (should_pause_upstream == (bit<1>)0) {
+                                zero_queue_count.write(0, (bit<32>)0);
+                            }
+
+                            bit<1> mark;
+                            if ((bit<16>)standard_metadata.deq_qdepth > PAUSE_THRESHOLD) {
+                                mark = (bit<1>)1;
+                            } else if ((bit<32>)standard_metadata.deq_qdepth == (bit<32>)0) {
+                                if (should_pause_upstream == (bit<1>)1) {
+                                    bit<32> queue_count;
+                                    zero_queue_count.read(queue_count, 0);
+                                    queue_count = queue_count + 1;
+                                    zero_queue_count.write(0, queue_count);
+
+                                    if (queue_count > 2) {
+                                        mark = (bit<1>)0;
+                                    } else {
+                                        mark = (bit<1>)1;
+                                    }
+                                } else {
+                                    mark = (bit<1>)0;
+                                }
+                            }
+                            should_pause_upstream_state.write((bit<32>)standard_metadata.ingress_port - 1, mark);
+
                         }
                     }
                 }

@@ -58,8 +58,7 @@ def handle_pkt(pkt, iface):
     if Ether in pkt:
         if pkt[Ether].src != get_if_hwaddr(iface):
             if pkt[Ether].type == TYPE_IPV4:
-                global num_normal_pkts
-                num_normal_pkts += 1
+                pass
             elif pkt[Ether].type == TYPE_RECIRC:
                 global num_recirc_pkts
                 num_recirc_pkts += 1
@@ -71,10 +70,12 @@ def handle_pkt(pkt, iface):
                 global num_other_pkts
                 num_other_pkts += 1
                 pkt.show2()
-            print "normal: {0}\trecirc: {1}\tother:{2}".format(num_normal_pkts, num_recirc_pkts, num_other_pkts)
         
 
             if IP in pkt and len(pkt[IP].options) > 0:
+                global num_normal_pkts
+                num_normal_pkts += 1
+                print "normal: {0}\trecirc: {1}\tother:{2}".format(num_normal_pkts, num_recirc_pkts, num_other_pkts)
                 for trace in pkt[IP].options[0].swtraces:
                     print trace.swid, trace.qdepth, trace.numrecirc
             # pkt.show2()
