@@ -210,7 +210,6 @@ control MyIngress(inout headers hdr,
                 // Subtract from overall
                 bit<32> overall_drop_count;
                 overall_drop_counter.read(overall_drop_count, 0);
-                overall_drop_counter.write(0, overall_drop_count - egress_drop_count);
 
                 // If no more packets in buffer, means we can resume all paused upstreams.
                 if (overall_drop_count - egress_drop_count == 0) {
@@ -281,6 +280,10 @@ control MyEgress(inout headers hdr,
         drop_counter_state.read(buffer_count_for_egress, (bit<32>)standard_metadata.egress_port - 1);
         hdr.swtraces[0].buffercount = buffer_count_for_egress;
         drop_counter_state.write((bit<32>)standard_metadata.egress_port - 1, 0);
+
+        bit<32> overall_drop_count;
+        overall_drop_counter.read(overall_drop_count, 0);
+        overall_drop_counter.write(0, overall_drop_count - buffer_count_for_egress);
 
         hdr.ipv4.ihl = hdr.ipv4.ihl + 2;
         hdr.ipv4_option.optionLength = hdr.ipv4_option.optionLength + 8; 
