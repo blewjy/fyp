@@ -12,6 +12,86 @@
        }
     },
     {
+      "table": "MyEgress.dst_host_exact",
+      "match": {
+        "hdr.ipv4.dstAddr": "10.0.1.1"
+      },
+      "action_name": "MyEgress.clear_drop_counter_for_host",
+      "action_params": {
+        "index": 0
+      }
+    },
+    {
+      "table": "MyEgress.dst_host_exact",
+      "match": {
+        "hdr.ipv4.dstAddr": "10.0.2.2"
+      },
+      "action_name": "MyEgress.clear_drop_counter_for_host",
+      "action_params": {
+        "index": 1
+      }
+    },
+    {
+      "table": "MyEgress.dst_host_exact",
+      "match": {
+        "hdr.ipv4.dstAddr": "10.0.1.11"
+      },
+      "action_name": "MyEgress.clear_drop_counter_for_host",
+      "action_params": {
+        "index": 2
+      }
+    },
+    {
+      "table": "MyEgress.dst_host_exact",
+      "match": {
+        "hdr.ipv4.dstAddr": "10.0.2.22"
+      },
+      "action_name": "MyEgress.clear_drop_counter_for_host",
+      "action_params": {
+        "index": 3
+      }
+    },
+    {
+      "table": "MyIngress.dst_host_exact",
+      "match": {
+        "hdr.ipv4.dstAddr": "10.0.1.1"
+      },
+      "action_name": "MyIngress.increment_drop_counter_for_host",
+      "action_params": {
+        "index": 0
+      }
+    },
+    {
+      "table": "MyIngress.dst_host_exact",
+      "match": {
+        "hdr.ipv4.dstAddr": "10.0.2.2"
+      },
+      "action_name": "MyIngress.increment_drop_counter_for_host",
+      "action_params": {
+        "index": 1
+      }
+    },
+    {
+      "table": "MyIngress.dst_host_exact",
+      "match": {
+        "hdr.ipv4.dstAddr": "10.0.1.11"
+      },
+      "action_name": "MyIngress.increment_drop_counter_for_host",
+      "action_params": {
+        "index": 2
+      }
+    },
+    {
+      "table": "MyIngress.dst_host_exact",
+      "match": {
+        "hdr.ipv4.dstAddr": "10.0.2.22"
+      },
+      "action_name": "MyIngress.increment_drop_counter_for_host",
+      "action_params": {
+        "index": 3
+      }
+    },
+    {
       "table": "MyIngress.ipv4_lpm",
       "match": {
         "hdr.ipv4.dstAddr": ["10.0.1.1", 32]

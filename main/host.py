@@ -60,7 +60,9 @@ class IPOption_SWTRACE(IPOption):
 
 def print_state():
    global num_pkts_sent, num_normal_pkts_recv, num_other_pkts_recv
-   print "pkts_sent: {0}\tnormal_recv: {1}\tother_recv: {2}".format(num_pkts_sent, num_normal_pkts_recv, num_other_pkts_recv)
+   # print "pkts_sent: {0}\tnormal_recv: {1}\tother_recv: {2}".format(num_pkts_sent, num_normal_pkts_recv, num_other_pkts_recv)
+   print "pkts_sent: {0}\tpkts_recv: {1}".format(num_pkts_sent, num_normal_pkts_recv)
+
 
 
 class Sender(threading.Thread):

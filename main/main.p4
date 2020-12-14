@@ -11,6 +11,7 @@ const bit<5>  IPV4_OPTION_SWTRACE = 31;
 
 #define MAX_HOPS  9
 #define MAX_PORTS 4
+#define MAX_HOSTS 6
 
 // Registers to hold state
 register<bit<1>>(MAX_PORTS)         egress_port_paused_state;   // Whether egress port has been paused
@@ -18,6 +19,7 @@ register<bit<1>>(MAX_PORTS)         has_sent_pause_to_upstream; // Whether this 
 register<bit<MAX_PORTS>>(MAX_PORTS) port_sent_pause_to_state;   // Track which downstream port triggered pause packet to which upstream port
 register<bit<32>>(MAX_PORTS)        drop_counter_state;         // Count how many packets were dropped due to paused egress.
 register<bit<32>>(1)                overall_drop_counter;       // Count the overall number of packets that were dropped (i.e. fake buffered)
+register<bit<32>>(MAX_HOSTS)        host_drop_counter;          // Count number of packets dropped by destination host
 
 /*************************************************************************
 *********************** H E A D E R S  ***********************************
@@ -189,6 +191,23 @@ control MyIngress(inout headers hdr,
         default_action = drop();
     }
 
+    action increment_drop_counter_for_host(bit<32> index) {
+        bit<32> host_drop_count;
+        host_drop_counter.read(host_drop_count, index);
+        host_drop_counter.write(index, host_drop_count + 1);
+    }
+
+    table dst_host_exact {
+        key = {
+            hdr.ipv4.dstAddr: exact;
+        }
+        actions = {
+            increment_drop_counter_for_host;
+            NoAction;
+        }
+        default_action = NoAction();
+    }
+
     apply {
 
         if (hdr.ipv4.isValid()) {
@@ -227,14 +246,7 @@ control MyIngress(inout headers hdr,
                 if (egress_is_paused == (bit<1>)1) {
                     // For this regular pkt, if egress port is paused, he must trigger a pause packet back to its ingress
 
-                    // bit<1> has_sent_pause_already;
-                    // has_sent_pause_to_upstream.read(has_sent_pause_already, (bit<32>)standard_metadata.ingress_port - 1);
-                    // if (has_sent_pause_already == (bit<1>)0) {
-                    //     hdr.ethernet.etherType = TYPE_PAUSE;
-                    //     standard_metadata.egress_spec = standard_metadata.ingress_port;
-                    //     has_sent_pause_to_upstream.write((bit<32>)standard_metadata.ingress_port - 1, (bit<1>)1);
-                    // }
-
+                    dst_host_exact.apply();
 
                     bit<32> egress_drop_count;
                     drop_counter_state.read(egress_drop_count, (bit<32>)standard_metadata.egress_spec - 1);
@@ -278,7 +290,7 @@ control MyEgress(inout headers hdr,
 
         bit<32> buffer_count_for_egress;
         drop_counter_state.read(buffer_count_for_egress, (bit<32>)standard_metadata.egress_port - 1);
-        hdr.swtraces[0].buffercount = buffer_count_for_egress;
+        // hdr.swtraces[0].buffercount = buffer_count_for_egress;
         drop_counter_state.write((bit<32>)standard_metadata.egress_port - 1, 0);
 
         bit<32> overall_drop_count;
@@ -298,10 +310,28 @@ control MyEgress(inout headers hdr,
         default_action = NoAction();      
     }
     
+    action clear_drop_counter_for_host(bit<32> index) {
+        bit<32> buffer_count_for_host;
+        host_drop_counter.read(buffer_count_for_host, index);
+        hdr.swtraces[0].buffercount = buffer_count_for_host;
+        host_drop_counter.write(index, 0);
+    }
+
+    table dst_host_exact {
+        key = {
+            hdr.ipv4.dstAddr: exact;
+        }
+        actions = {
+            clear_drop_counter_for_host;
+            NoAction;
+        }
+        default_action = NoAction();
+    }
 
     apply {
         if (hdr.ethernet.isValid() && hdr.ethernet.etherType == TYPE_IPV4 && hdr.swtrace_count.isValid()) {
             swtrace.apply();
+            dst_host_exact.apply();
         }
 
         if (hdr.ethernet.isValid() && hdr.ethernet.etherType == TYPE_RESUME) {

@@ -1,4 +1,4 @@
 BMV2_SWITCH_EXE = simple_switch_grpc
-TOPO = cbd-topo/topology.json
+TOPO = simple-topo-malicious/topology.json
 
 include ../utils/Makefile
